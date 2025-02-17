@@ -1,0 +1,145 @@
+import cv2
+import mediapipe as mp
+from time import sleep
+from pynput.keyboard import Controller
+
+# Initialize the webcam
+cap = cv2.VideoCapture(0)
+cap.set(3, 1280)  # Width
+cap.set(4, 720)   # Height
+
+# Initialize MediaPipe Hands
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.8)
+
+# For drawing landmarksBMMM,,,,ERXRM
+mp_drawing = mp.solutions.drawing_utils
+
+# Initialize the virtual keyboard controller
+keyboard = Controller()
+
+# Define keys layout
+keys = [["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+        ["A", "S", "D", "F", "G", "H", "J", "K", "L", ";"],
+        ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "/"]]
+
+# Define Button class with corrected __init__ method
+class Button:
+    def __init__(self, pos, text, size=[85, 85]):  # Corrected constructor
+        self.pos = pos
+        self.size = size
+        self.text = text
+
+# Modified drawAll function with corner rectangles and realistic feedback
+def drawAll(img, buttonList):
+    for button in buttonList:
+        x, y = button.pos
+        w, h = button.size
+        
+        # Draw the corner rectangle
+        drawCornerRect(img, (x, y), (w, h), l=20, t=5, color=(255, 0, 255))
+
+        # Fill the button rectangle
+        cv2.rectangle(img, (x, y), (x + w, y + h), (255, 0, 255), cv2.FILLED)
+
+        # Draw the button text
+        cv2.putText(img, button.text, (x + 20, y + 65),
+                    cv2.FONT_HERSHEY_PLAIN, 4, (255, 255, 255), 4)
+    return img
+
+# Function to draw a corner rectangle
+def drawCornerRect(img, pos, size, l=30, t=5, color=(255, 0, 255), rt=0):
+    x, y = pos
+    w, h = size
+
+    # Top-left corner
+    cv2.line(img, (x, y), (x + l, y), color, t)  # Horizontal
+    cv2.line(img, (x, y), (x, y + l), color, t)  # Vertical
+
+    # Top-right corner
+    cv2.line(img, (x + w, y), (x + w - l, y), color, t)
+    cv2.line(img, (x + w, y), (x + w, y + l), color, t)
+
+    # Bottom-left corner
+    cv2.line(img, (x, y + h), (x + l, y + h), color, t)
+    cv2.line(img, (x, y + h), (x, y + h - l), color, t)
+
+    # Bottom-right corner
+    cv2.line(img, (x + w, y + h), (x + w - l, y + h), color, t)
+    cv2.line(img, (x + w, y + h), (x + w, y + h - l), color, t)
+
+    return img
+
+# Initialize buttons
+buttonList = []
+for i in range(len(keys)):
+    for j, key in enumerate(keys[i]):
+        buttonList.append(Button([100 * j + 50, 100 * i + 50], key))
+
+# Function to draw a cursor on the screen representing the index finger
+def drawCursor(img, x, y):
+    cv2.circle(img, (x, y), 10, (0, 255, 0), cv2.FILLED)
+
+# Main loop
+while True:
+    success, img = cap.read()  # Capture webcam frame
+
+    if not success:
+        break
+
+    # Flip the image horizontally for a more realistic, mirrored experience
+    img = cv2.flip(img, 1)
+
+    # Convert the BGR image to RGB for mediapipe processing
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = hands.process(img_rgb)  # Detect hands in the frame
+
+    # Draw buttons on the frame
+    img = drawAll(img, buttonList)
+
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+            # Get the tip of the index finger (landmark 8) and middle finger (landmark 12)
+            index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            middle_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP]
+
+            # Convert landmark positions to pixel coordinates
+            h, w, _ = img.shape
+            x1, y1 = int(index_finger_tip.x * w), int(index_finger_tip.y * h)
+            x2, y2 = int(middle_finger_tip.x * w), int(middle_finger_tip.y * h)
+
+            # Draw a cursor for the index finger
+            drawCursor(img, x1, y1)
+
+            # Iterate over all buttons to detect if the index finger is hovering over them
+            for button in buttonList:
+                x, y = button.pos
+                w, h = button.size
+
+                if x < x1 < x + w and y < y1 < y + h:
+                    # Highlight the button when hovered
+                    drawCornerRect(img, (x - 5, y - 5), (w + 10, h + 10), l=20, t=5, color=(175, 0, 175))
+                    cv2.putText(img, button.text, (x + 20, y + 65),
+                                cv2.FONT_HERSHEY_PLAIN, 4, (255, 255, 255), 4)
+
+                    # Calculate the distance between index and middle finger tips
+                    distance = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+
+                    # If distance is small, simulate a key press (button click)
+                    if distance < 30:
+                        keyboard.press(button.text)  # Directly send the keypress to Notepad
+                        cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), cv2.FILLED)
+                        cv2.putText(img, button.text, (x + 20, y + 65),
+                                    cv2.FONT_HERSHEY_PLAIN, 4, (255, 255, 255), 4)
+                        sleep(0.15)  # Small delay to avoid multiple keypresses
+
+    # Show the result on the screen
+    cv2.imshow("Image", img)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Release resources
+cap.release()
+cv2.destroyAllWindows()
